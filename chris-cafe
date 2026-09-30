@@ -1,0 +1,455 @@
+#!/usr/bin/env python3
+
+import argparse
+import fcntl
+import json
+import os
+import re
+import signal
+import stat
+import subprocess
+import sys
+import time
+
+SUDO = '/usr/bin/sudo'
+PMSET = '/usr/bin/pmset'
+POWERMETRICS = '/usr/bin/powermetrics'
+IOREG = '/usr/sbin/ioreg'
+SYSCTL = '/usr/sbin/sysctl'
+SPROFILER = '/usr/sbin/system_profiler'
+
+# The lock is machine-wide because the sleep override is machine-wide.
+LOCKFILE = '/tmp/chris-cafe.lock'
+
+# These argument vectors must match /etc/sudoers.d/chris-cafe exactly.
+# sudoers matches arguments literally, so a change to one of these
+# without the same change there costs a password prompt that this
+# script cannot answer.
+HOLD = [PMSET, '-a', 'disablesleep', '1']
+RELEASE = [PMSET, '-a', 'disablesleep', '0']
+SLEEPNOW = [PMSET, 'sleepnow']
+SAMPLE = [POWERMETRICS, '-n', '1', '-i', '200', '--samplers', 'thermal']
+
+# pmset displaysleepnow needs no privilege, so it takes no sudoers rule.
+DISPLAYSLEEP = [PMSET, 'displaysleepnow']
+DISPLAYS = [SPROFILER, '-json', 'SPDisplaysDataType']
+INTERNAL = 'spdisplays_internal'
+DISPLAY_ON = 'Prevent sleep while display is on'
+
+# Every leader is an East Asian Wide code point, so the terminal advances
+# two cells and the log lines stay in one column. A Neutral-width code
+# point leaves a ragged column, and U+FE0F does not correct that: the
+# variation selector picks the glyph, not the cell count.
+CUP = '\N{HOT BEVERAGE}'
+BED = '\N{SLEEPING ACCOMMODATION}'
+VEST = '\N{SAFETY VEST}'
+LAPTOP = '\N{PERSONAL COMPUTER}'
+PLUG = '\N{ELECTRIC PLUG}'
+CHART = '\N{BAR CHART}'
+FIRE = '\N{FIRE}'
+MOON = '\N{CRESCENT MOON}'
+BLIND = '\N{SEE-NO-EVIL MONKEY}'
+NOGO = '\N{NO ENTRY SIGN}'
+CROSS = '\N{CROSS MARK}'
+LOCK = '\N{CLOSED LOCK WITH KEY}'
+BANG = '\N{HEAVY EXCLAMATION MARK SYMBOL}'
+SHRUG = '\N{SHRUG}'
+AGAIN = '\N{CLOCKWISE RIGHTWARDS AND LEFTWARDS OPEN CIRCLE ARROWS}'
+SCREEN = '\N{TELEVISION}'
+HINT = '\N{ELECTRIC LIGHT BULB}'
+
+LID = ('the lid is open', LAPTOP)
+AC = ('the machine is on AC power', PLUG)
+# An unreadable probe still arms the safeguard. An unnecessary sleep is
+# recoverable and an overheating bag is not.
+MURK = ('the lid or power state is unreadable', SHRUG)
+# A machine with no clamshell can never be shut in a bag, so the premise
+# of the safeguard does not hold and an unwanted sleep would be all cost.
+NOLID = ('the machine has no lid', SCREEN)
+
+LEVELS = ('Nominal', 'Fair', 'Serious', 'Critical')
+HOT = LEVELS.index('Serious')
+TICK = 1
+# A confirmed kern.waketime change gates the wake report, so this only
+# has to exceed the jitter of one tick.
+SLEPT = 5
+PROBE = 20
+GRACE = 10
+# The panel must not stay lit behind a closed lid for a whole sample
+# interval, and the lid probe that gates it costs about 10 ms.
+BLANK_EVERY = 5
+
+parser = argparse.ArgumentParser(description='''
+  Keep the machine awake, and put it to sleep if it gets hot with the
+  lid closed on battery.
+''')
+parser.add_argument('-i', '--interval', type=int, default=60,
+  help='seconds between thermal samples (default 60)')
+parser.add_argument('-n', '--trips', type=int, default=3,
+  help='consecutive hot samples before sleep (default 3)')
+parser.add_argument('-v', '--verbose', action='store_true',
+  help='print each thermal sample')
+parser.add_argument('--vectors', action='store_true',
+  help='print the sudo argument vectors and exit; make check uses this '
+  'to prove the script and the sudoers file still agree')
+parser.add_argument('arg', nargs='*', help='command to run; with no '
+  'command, run until interrupted. Put -- first when the command takes '
+  'options of its own')
+args = parser.parse_args()
+if args.interval < 1:
+  parser.error('interval must be at least 1 second')
+if args.trips < 1:
+  parser.error('trips must be at least 1')
+if args.vectors:
+  for vector in (HOLD, RELEASE, SLEEPNOW, SAMPLE):
+    print(' '.join(vector))
+  sys.exit(0)
+
+def say(message, mark=CUP):
+  print(f'{mark} {parser.prog}: {message}', file=sys.stderr)
+
+# A probe that times out or cannot start must look like a probe that
+# failed, so that every caller takes its own failure path.
+def run(argv, timeout=PROBE):
+  try:
+    return subprocess.run(argv, capture_output=True, text=True,
+      timeout=timeout)
+  except (OSError, subprocess.TimeoutExpired):
+    return subprocess.CompletedProcess(argv, 1, '', '')
+
+def sudo(argv, timeout=PROBE):
+  return run([SUDO, '-n'] + argv, timeout)
+
+def pressure():
+  p = sudo(SAMPLE)
+  if p.returncode != 0:
+    return None
+  m = re.search(r'^Current pressure level:\s*(\S+)', p.stdout, re.M)
+  if m is None or m.group(1) not in LEVELS:
+    return None
+  return m.group(1)
+
+# The three state probes return None when they cannot tell, never a
+# confident False. A silent False here would disarm the safeguard.
+def clamshell():
+  return run([IOREG, '-r', '-k', 'AppleClamshellState', '-d', '4'])
+
+def lid_closed():
+  p = clamshell()
+  if p.returncode != 0 or 'AppleClamshellState' not in p.stdout:
+    return None
+  return '"AppleClamshellState" = Yes' in p.stdout
+
+# ioreg exits 0 with no output when the key is absent, so an empty answer
+# is a fact about the machine and not a failed read.
+def has_lid():
+  p = clamshell()
+  return None if p.returncode != 0 else 'AppleClamshellState' in p.stdout
+
+def on_battery():
+  p = run([PMSET, '-g', 'batt'])
+  if p.returncode != 0 or 'drawing from' not in p.stdout:
+    return None
+  return "'Battery Power'" in p.stdout
+
+def override_set():
+  p = run([PMSET, '-g'])
+  if p.returncode != 0:
+    return None
+  m = re.search(r'SleepDisabled\s+(\d+)', p.stdout)
+  return None if m is None else m.group(1) == '1'
+
+def carveout(closed):
+  if lidded is False:
+    return NOLID
+  battery = on_battery()
+  if closed is None or battery is None:
+    return MURK
+  if not closed:
+    return LID
+  if not battery:
+    return AC
+  return None
+
+def report(why):
+  if why is None:
+    say('thermal safeguard armed', VEST)
+  else:
+    say(f'thermal safeguard off, because {why[0]}', why[1])
+
+def external_displays():
+  p = run(DISPLAYS)
+  if p.returncode != 0:
+    return None
+  try:
+    d = json.loads(p.stdout)
+    nodes = [n for g in d['SPDisplaysDataType']
+             for n in g.get('spdisplays_ndrvs', [])]
+    external = [n for n in nodes
+                if n.get('spdisplays_connection_type') != INTERNAL]
+  except (ValueError, TypeError, KeyError, AttributeError, IndexError):
+    return None
+  # An empty inventory is not proof that no external display is attached.
+  return external if nodes else None
+
+# powerd names this assertion, and a rename would make it read False
+# forever. Nothing gates the blanking on it: see blank_if_shut.
+def display_on():
+  p = run([PMSET, '-g', 'assertions'])
+  return p.returncode == 0 and DISPLAY_ON in p.stdout
+
+# An external display means clamshell mode, where that display is the one
+# the person works on. A failed probe counts as an external display, so an
+# uncertain answer never blanks a screen somebody is using.
+# display_on() only decides whether this is worth doing now and whether
+# to say so. On the sample interval the work happens whatever it says, so
+# a renamed powerd assertion cannot silently leave the panel lit.
+def blank_if_shut(closed, forced):
+  if closed is not True:
+    return False
+  lit = display_on()
+  if not lit and not forced:
+    return False
+  external = external_displays()
+  if external is None or external:
+    return False
+  # The probes above cost about a third of a second. Ask again, so the
+  # panel is not blanked in the face of somebody opening the lid.
+  if lid_closed() is not True:
+    return False
+  return run(DISPLAYSLEEP).returncode == 0 and lit
+
+def waketime():
+  p = run([SYSCTL, '-n', 'kern.waketime'])
+  return p.stdout.strip() if p.returncode == 0 else None
+
+def release():
+  global released
+  if released:
+    return True
+  # Releasing the override is the whole purpose of the script, so no
+  # signal may interrupt it. An ignored disposition survives the exec,
+  # so the sudo child ignores them too.
+  previous = [(s, signal.signal(s, signal.SIG_IGN))
+              for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)]
+  try:
+    failed = sudo(RELEASE).returncode != 0
+  finally:
+    for s, handler in previous:
+      signal.signal(s, handler)
+  if failed:
+    say('sleep is still disabled', BANG)
+    say(f'run: sudo {" ".join(RELEASE)}', HINT)
+    return False
+  released = True
+  say('sleep enabled', BED)
+  return True
+
+# The wrapped command shares this process group on purpose, so that the
+# terminal delivers Ctrl-C to it as caffeinate would. runfor makes the
+# opposite choice and kills a whole group; a command that forks leaves
+# its children behind here.
+def reap(grace=GRACE):
+  if child is None or child.poll() is not None:
+    return
+  previous = [(sig, signal.signal(sig, signal.SIG_IGN))
+              for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)]
+  try:
+    child.terminate()
+    try:
+      child.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+      child.kill()
+      child.wait()
+  finally:
+    for sig, handler in previous:
+      signal.signal(sig, handler)
+
+def denied():
+  say('check /etc/sudoers.d/chris-cafe; see "chris-cafe" in readme.md',
+    HINT)
+  sys.exit(1)
+
+def on_signal(signum, frame):
+  raise SystemExit(128 + signum)
+
+# The override is one machine-wide setting rather than a count, so a
+# second instance would clear it on the way out and leave the first
+# holding nothing. The kernel drops this lock even on SIGKILL.
+# /tmp is world-writable, so refuse a symlink and refuse a file that
+# somebody else owns rather than follow either one.
+def take_lock():
+  for _ in range(5):
+    held = try_lock()
+    if held is not None:
+      return held
+  say(f'{LOCKFILE} keeps being replaced under us', NOGO)
+  sys.exit(1)
+
+def try_lock():
+  try:
+    fd = os.open(LOCKFILE, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o644)
+  except OSError as e:
+    say(f'cannot open {LOCKFILE}: {e.strerror}', NOGO)
+    sys.exit(1)
+  info = os.fstat(fd)
+  if not stat.S_ISREG(info.st_mode) or info.st_uid not in (os.getuid(), 0):
+    os.close(fd)
+    say(f'{LOCKFILE} is not a regular file that you or root own', NOGO)
+    sys.exit(1)
+  opened = os.fdopen(fd, 'r+')
+  try:
+    fcntl.flock(opened, fcntl.LOCK_EX | fcntl.LOCK_NB)
+  except OSError:
+    opened.seek(0)
+    # Anybody can write this file, so print it only when it is a pid.
+    other = opened.read(32).strip()
+    say(f'another {parser.prog} (pid '
+      f'{other if other.isdigit() else "unknown"}) holds the override',
+      NOGO)
+    sys.exit(1)
+  # The lock lives on the inode, not on the name. Somebody who deletes
+  # what looks like a stale file would otherwise let a second instance
+  # create a new inode and lock that one instead.
+  here = os.stat(LOCKFILE) if os.path.exists(LOCKFILE) else None
+  if here is None or (here.st_ino, here.st_dev) != (info.st_ino, info.st_dev):
+    opened.close()
+    return None
+  held = opened
+  held.seek(0)
+  held.truncate()
+  held.write(f'{os.getpid()}\n')
+  held.flush()
+  return held
+
+lock = take_lock()
+
+# Python runs no finally block on a default SIGTERM or SIGHUP, and the
+# override must come back off on either. These go in before the override
+# goes on, so that no window exists where a signal strands the setting.
+signal.signal(signal.SIGTERM, on_signal)
+signal.signal(signal.SIGHUP, on_signal)
+
+# Read the level before disabling sleep, so a missing sudoers rule stops
+# the script while the machine can still sleep. Without the sample there
+# is no safeguard, and the override must not be held without one.
+released = False
+held = False
+child = None
+status = 0
+lidded = has_lid()
+level = pressure()
+if level is None:
+  say('cannot read the thermal pressure level', NOGO)
+  denied()
+
+try:
+  # Set before the call, not after. pmset applies the setting at the
+  # start of its run, so a signal delivered during it can leave the
+  # override on. Releasing one that was never taken costs one sudo call.
+  held = True
+  if sudo(HOLD).returncode != 0:
+    say('cannot disable lid-close sleep', NOGO)
+    denied()
+  say(f'sleep disabled; thermal pressure {level}')
+
+  wake = waketime()
+  if wake is None:
+    say('cannot read kern.waketime; will not notice a sleep', SHRUG)
+  closed = lid_closed()
+  was = carveout(closed)
+  report(was)
+
+  if args.arg:
+    try:
+      child = subprocess.Popen(args.arg)
+    except OSError as e:
+      say(f'{args.arg[0]}: {e.strerror}', CROSS)
+      sys.exit(127 if isinstance(e, FileNotFoundError) else 126)
+
+  hot = 0
+  blind = 0
+  wall = time.time()
+  mono = time.monotonic()
+  deadline = mono
+  blank_at = mono
+  while True:
+    if child is not None and child.poll() is not None:
+      status = child.returncode
+      status = 128 - status if status < 0 else status
+      break
+
+    now = time.monotonic()
+    real = time.time()
+    # time.monotonic() stops while the machine sleeps and time.time()
+    # does not, so a gap between the two means the machine slept. A
+    # clock correction makes the same gap, and sysctl separates them.
+    gap = (real - wall) - (now - mono)
+    if gap > SLEPT and wake is not None and waketime() not in (None, wake):
+      say('the machine slept; stopping', MOON)
+      status = 124
+      break
+    wall, mono = real, now
+
+    due = now >= deadline
+    if due or now >= blank_at:
+      blank_at = now + min(args.interval, BLANK_EVERY)
+      if blank_if_shut(lid_closed(), due):
+        say('display off', LOCK)
+
+    if due:
+      deadline = now + args.interval
+      # Anything can clear a machine-wide setting, and make install does
+      # exactly that when it bootstraps the reset daemon.
+      if override_set() is False:
+        say('the override was cleared; setting it again', AGAIN)
+        if sudo(HOLD).returncode != 0:
+          say('could not set the override again', BANG)
+      # A deleted lock file lets a second instance create and lock a new
+      # one. Re-taking the override above limits what that costs; saying
+      # so here keeps it from being silent.
+      mine = os.fstat(lock.fileno())
+      there = os.stat(LOCKFILE) if os.path.exists(LOCKFILE) else None
+      if there is None or (there.st_ino, there.st_dev) != (mine.st_ino,
+          mine.st_dev):
+        say(f'{LOCKFILE} was replaced; a second instance can start', BANG)
+      why = carveout(lid_closed())
+      if why != was:
+        report(why)
+        was = why
+        hot = 0
+        blind = 0
+      if why in (None, MURK):
+        level = pressure()
+        if args.verbose:
+          say(level or 'unreadable', CHART)
+        if level is None:
+          blind += 1
+          if blind >= args.trips:
+            say('lost the thermal pressure level; stopping', BLIND)
+            status = 1
+            break
+        else:
+          blind = 0
+          hot = hot + 1 if LEVELS.index(level) >= HOT else 0
+          if level == 'Critical' or hot >= args.trips:
+            say(f'thermal pressure {level}; going to sleep', FIRE)
+            # Release before sleeping, because sleepnow does nothing
+            # while the override is set, and before touching the child,
+            # because a child may ignore a signal and the sleep must not
+            # wait on it.
+            if release() and sudo(SLEEPNOW).returncode == 0:
+              status = 125
+            else:
+              say('could not put the machine to sleep', BANG)
+              status = 1
+            break
+    time.sleep(TICK)
+except KeyboardInterrupt:
+  status = 130
+finally:
+  if held and not release():
+    status = 1
+  reap()
+
+sys.exit(status)

@@ -1,0 +1,11 @@
+# chris-cafe holds the lid-close sleep override and reads the thermal
+# pressure level. It runs unattended with the lid closed, so neither
+# call can meet a password prompt.
+#
+# sudoers matches arguments literally. These four vectors must match the
+# constants in the chris-cafe script exactly.
+
+%admin ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 1
+%admin ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0
+%admin ALL=(root) NOPASSWD: /usr/bin/pmset sleepnow
+%admin ALL=(root) NOPASSWD: /usr/bin/powermetrics -n 1 -i 200 --samplers thermal
