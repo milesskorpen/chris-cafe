@@ -20,6 +20,10 @@ Put `--` before COMMAND when COMMAND takes options of its own, the same
 as runfor. Without the `--`, argparse reads those options as options of
 chris-cafe and stops with a usage error.
 
+The shebang is `#!/usr/bin/env python3`, as in the other scripts here,
+so chris-cafe runs under whichever python3 is first on PATH, and
+`make install` does not change which interpreter a shell picks.
+
 `-v` prints a sample only while the safeguard is armed. With the lid
 open, or on AC power, it prints nothing, because no sample is taken.
 
