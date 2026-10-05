@@ -19,7 +19,9 @@ SYSCTL = '/usr/sbin/sysctl'
 SPROFILER = '/usr/sbin/system_profiler'
 
 # The lock is machine-wide because the sleep override is machine-wide.
-LOCKFILE = '/tmp/chris-cafe.lock'
+# Not /tmp or $TMPDIR: tmp_cleaner and dirhelper delete a file there that
+# is three days old, and the lock is written only once, at startup.
+LOCKFILE = '/Users/Shared/.chris-cafe.lock'
 
 # These argument vectors must match /etc/sudoers.d/chris-cafe exactly.
 # sudoers matches arguments literally, so a change to one of these
@@ -276,8 +278,8 @@ def on_signal(signum, frame):
 # The override is one machine-wide setting rather than a count, so a
 # second instance would clear it on the way out and leave the first
 # holding nothing. The kernel drops this lock even on SIGKILL.
-# /tmp is world-writable, so refuse a symlink and refuse a file that
-# somebody else owns rather than follow either one.
+# The directory is world-writable, so refuse a symlink and refuse a file
+# that somebody else owns rather than follow either one.
 def take_lock():
   for _ in range(5):
     held = try_lock()
@@ -369,6 +371,7 @@ try:
 
   hot = 0
   blind = 0
+  replaced = False
   wall = time.time()
   mono = time.monotonic()
   deadline = mono
@@ -407,12 +410,15 @@ try:
           say('could not set the override again', BANG)
       # A deleted lock file lets a second instance create and lock a new
       # one. Re-taking the override above limits what that costs; saying
-      # so here keeps it from being silent.
-      mine = os.fstat(lock.fileno())
-      there = os.stat(LOCKFILE) if os.path.exists(LOCKFILE) else None
-      if there is None or (there.st_ino, there.st_dev) != (mine.st_ino,
-          mine.st_dev):
-        say(f'{LOCKFILE} was replaced; a second instance can start', BANG)
+      # so here keeps it from being silent. The inode cannot come back,
+      # so once is enough.
+      if not replaced:
+        mine = os.fstat(lock.fileno())
+        there = os.stat(LOCKFILE) if os.path.exists(LOCKFILE) else None
+        if there is None or (there.st_ino, there.st_dev) != (mine.st_ino,
+            mine.st_dev):
+          say(f'{LOCKFILE} was replaced; a second instance can start', BANG)
+          replaced = True
       why = carveout(lid_closed())
       if why != was:
         report(why)

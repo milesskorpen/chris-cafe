@@ -140,8 +140,16 @@ setting.
 The sleep override is one machine-wide setting rather than a count. Two
 instances would both set it, and the first to exit would clear it while
 the second still believed it held the machine awake. chris-cafe takes an
-exclusive lock on `/tmp/chris-cafe.lock` before it changes anything. A
-second instance prints the pid of the first and exits 1.
+exclusive lock on `/Users/Shared/.chris-cafe.lock` before it changes
+anything. A second instance prints the pid of the first and exits 1.
+
+The lock is not in `/tmp` or `$TMPDIR`, because macOS deletes old files
+from both. `/usr/libexec/tmp_cleaner` runs at midnight and deletes a
+file in `/tmp` when its atime, mtime and ctime are all more than three
+days old. `dirhelper` does the same to `$TMPDIR` at 03:35. chris-cafe
+writes the lock only at startup, so an instance that runs over a weekend
+lost its lock file to `tmp_cleaner`. `/Users/Shared` has the same mode
+as `/tmp` and no cleaner. The leading dot keeps the file out of Finder.
 
 The lock is a flock rather than a pid file, so the kernel drops it when
 the process dies, including under SIGKILL. There is no stale lock to
@@ -150,10 +158,12 @@ clean up after a crash.
 After it takes the lock, chris-cafe checks that the inode it locked is
 still the one at that path. Somebody who deletes the file can still let
 a second instance create and lock a new one, so chris-cafe re-checks at
-every sample interval and says so when the file was replaced. Re-taking
-the override each interval limits what a second instance costs.
+every sample interval and says so, once, when the file was replaced.
+The locked inode cannot come back to the path, so the check stops after
+the first warning. Re-taking the override each interval limits what a
+second instance costs.
 
-CAUTION: /tmp is world-writable. The lock file is opened with
+CAUTION: /Users/Shared is world-writable. The lock file is opened with
 `O_NOFOLLOW` and refused unless it is a regular file owned by you or by
 root. Without that, another local user could point the name at one of
 your files and chris-cafe would truncate it. The pid is read back at
