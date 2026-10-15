@@ -1,4 +1,4 @@
-## chris-cafe
+# chris-cafe
 
 ```
 chris-cafe [-i INTERVAL] [-n TRIPS] [-v] [--] [COMMAND [ARG]...]
@@ -16,13 +16,13 @@ assertion. The one setting that blocks the lid switch is
 stays set until something clears it, so chris-cafe holds it and releases
 it again on the way out.
 
-Put `--` before COMMAND when COMMAND takes options of its own, the same
-as runfor. Without the `--`, argparse reads those options as options of
-chris-cafe and stops with a usage error.
+Put `--` before COMMAND when COMMAND takes options of its own. Without
+the `--`, argparse reads those options as options of chris-cafe and
+stops with a usage error.
 
-The shebang is `#!/usr/bin/env python3`, as in the other scripts here,
-so chris-cafe runs under whichever python3 is first on PATH, and
-`make install` does not change which interpreter a shell picks.
+The shebang is `#!/usr/bin/env python3`, so chris-cafe runs under
+whichever python3 is first on PATH, and `make install` does not change
+which interpreter a shell picks.
 
 `-v` prints a sample only while the safeguard is armed. With the lid
 open, or on AC power, it prints nothing, because no sample is taken.
@@ -257,6 +257,9 @@ The exit status:
 - `/etc/sudoers.d/chris-cafe`, four NOPASSWD rules.
 - `/Library/LaunchDaemons/com.chrispennello.chris-cafe.reset.plist`,
   which clears the override at every boot.
+
+`sudo make uninstall` clears the override, unloads the daemon, and
+removes the three files.
 
 The sudoers rules are necessary because the script runs unattended with
 the lid closed, where a sudo password prompt has nobody to answer it.
