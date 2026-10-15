@@ -40,6 +40,15 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(session.state, .uncertain)
         XCTAssertTrue(session.releaseFailed)
     }
+    func testFailedReassertionShowsWarningUntilConfirmedAgain() {
+        var session = Session()
+        session.begin()
+        session.receive(.init(kind: "☕", message: "sleep disabled"))
+        session.receive(.init(kind: "❗", message: "could not set the override again"))
+        XCTAssertEqual(session.state, .uncertain)
+        session.receive(.init(kind: "☕", message: "sleep disabled again"))
+        XCTAssertEqual(session.state, .on)
+    }
     func testDenialBeforeHoldIsSafe() {
         var session = Session()
         session.begin()

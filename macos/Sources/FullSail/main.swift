@@ -56,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             add(menu, engine.session.guardDetail)
         } else if !engine.session.detail.hasPrefix("Your Mac") { add(menu, engine.session.detail) }
         menu.addItem(.separator())
-        if state == .uncertain {
+        if state == .uncertain && !engine.isRunning {
             add(menu, "Restore Normal Sleep…", action: #selector(restore))
         } else if engine.isRunning {
             add(menu, state == .stopping ? "Lowering Sails…" : "Lower Sails", action: #selector(stop), enabled: state != .stopping)

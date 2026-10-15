@@ -425,6 +425,8 @@ try:
         say('the override was cleared; setting it again', AGAIN)
         if sudo(HOLD).returncode != 0:
           say('could not set the override again', BANG)
+        elif args.events_json:
+          say('sleep disabled again', CUP)
       # A deleted lock file lets a second instance create and lock a new
       # one. Re-taking the override above limits what that costs; saying
       # so here keeps it from being silent. The inode cannot come back,

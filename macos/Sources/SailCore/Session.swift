@@ -41,6 +41,10 @@ public struct Session {
         case "🦺", "💻", "🔌", "📺", "🤷": guardDetail = event.message
         case "❗":
             lastProblem = event.message
+            if event.message == "could not set the override again" {
+                state = .uncertain
+                detail = "Keep-awake could not be restored. Lower the sails or wait for a retry."
+            }
             if event.message == "sleep is still disabled" {
                 releaseFailed = true
                 mayHoldOverride = true
