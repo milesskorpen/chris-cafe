@@ -1,5 +1,100 @@
 # chris-cafe
 
+## Full Sail menu bar app
+
+This fork adds **Full Sail**, a small native macOS menu bar companion.
+The original command-line utility remains available below.
+
+![Sails up and sails down](macos/assets/icon-preview.png)
+
+- **Sails up:** keep your Mac awake, including with the lid closed.
+- **Sails down:** return to your usual sleep settings.
+- Choose an indefinite session, or 15 minutes, 30 minutes, 1, 2, or 4 hours.
+- Optional launch at login opens the app with sails down; it never starts a
+  keep-awake session automatically.
+- No Dock icon, Electron, web server, network requests, or telemetry.
+- Uses the original thermal protection and display policy described below.
+
+The color icons reinterpret Wholesail's three-triangle sailboat: full sails
+for on, a bare mast and furled sails for off. The menu bar uses monochrome
+template icons that follow the Mac's light or dark appearance. Status is
+also available in the menu and accessibility label.
+
+### Build and open
+
+Requirements: macOS 13 or later, Xcode command-line tools to build, and
+Python 3 to run the bundled original engine. The app checks Homebrew Python
+on Apple Silicon and Intel, then `/usr/bin/python3`. A machine with only the
+Apple Python stub may need command-line tools or a separate Python install.
+The engine runs as your user; the app does not run as root.
+
+```sh
+./macos/build.sh               # this Mac's architecture
+./macos/build.sh --universal   # Apple Silicon + Intel
+open 'macos/dist/Full Sail.app'
+```
+
+Copy `Full Sail.app` to Applications for everyday use and launch at login.
+The build is ad-hoc signed for local use, not Developer ID signed or
+notarized. The ZIP contains the app and its support installer; it is a
+development build, not a public release.
+
+On first use, choose **Set Up Closed-Lid Support…**. Review the explanation,
+then open the bundled installer and approve its administrator prompt. After
+installation, choose **Recheck Setup**. Existing `sudo make install` users
+can use the app without reinstalling if all four grants and the reset
+daemon are already present. Build and tests do not install support or
+change your Mac's sleep settings.
+
+The support installer installs exactly the original sudoers rules and
+boot-reset daemon. It grants `%admin` the four exact commands documented
+under “chris-cafe setup”; any program running as an admin user can invoke
+those commands without a password. It does not install a root Python
+script, launch the app, or enable keep-awake. It refuses installation while
+it detects an active engine. The boot-reset daemon clears any old override
+when installed and at boot. Lower sails before installing or updating it.
+
+### Cleanup and failures
+
+The app waits for the engine to confirm the override was released before
+quitting. It raises the sail icon only after the engine confirms the
+override was set. If release fails or the engine crashes while holding it,
+the menu shows a warning and offers **Restore Normal Sleep…**.
+
+The bundled engine has two optional integration flags: `--events-json`
+emits flushed JSON events to stderr, and `--parent-pid PID` exits through
+the usual cleanup if its supervising app disappears. The parent check runs
+each loop, after any in-progress probes, each of which has the existing
+20-second timeout. A force-killed engine cannot clean itself up; the
+original boot reset remains the final fallback. No automatic restart
+re-enables keep-awake after a thermal shutdown or sleep.
+
+To remove support, lower sails and quit, then run `sudo make uninstall`
+from this repository. That restores normal sleep and removes the original
+three paths. Delete the app and turn off its login item if enabled. The
+package receipt can optionally be removed with
+`sudo pkgutil --forget com.milesskorpen.fullsail.support`.
+
+### Verification
+
+```sh
+swift test --package-path macos
+python3 -m unittest discover -s tests -v
+```
+
+Swift tests cover confirmed state changes, startup cancellation, failed
+cleanup, crashes, thermal-stop messaging, and fragmented event streams.
+Python tests run the actual engine loop with mocked OS probes, including
+critical heat, repeated serious heat, cooling, and unreadable temperatures.
+They never invoke privileged power commands. The original `make check`
+remains a separate installation check and requires support to be installed.
+
+Upstream: [pennello/chris-cafe](https://github.com/pennello/chris-cafe), by
+Chris Pennello. Full Sail's native interface and vector icon variants live
+under `macos/`. No license has been added to the upstream code.
+
+## Original command-line utility
+
 ```
 chris-cafe [-i INTERVAL] [-n TRIPS] [-v] [--] [COMMAND [ARG]...]
 ```

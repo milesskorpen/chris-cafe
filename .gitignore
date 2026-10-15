@@ -1,0 +1,5 @@
+macos/.build/
+macos/dist/
+macos/assets/AppIcon.iconset/
+__pycache__/
+.DS_Store

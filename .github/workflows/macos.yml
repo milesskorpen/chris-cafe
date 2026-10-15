@@ -1,0 +1,19 @@
+name: Full Sail
+on:
+  push:
+  pull_request:
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test native session state
+        run: swift test --package-path macos
+      - name: Test engine with mocked power commands
+        run: python3 -m unittest discover -s tests -v
+      - name: Build universal Mac app
+        run: ./macos/build.sh --universal
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Full-Sail
+          path: macos/dist/Full-Sail.zip

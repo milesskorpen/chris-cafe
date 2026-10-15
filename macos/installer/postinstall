@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+daemon=/Library/LaunchDaemons/com.chrispennello.chris-cafe.reset.plist
+/usr/sbin/visudo -c -f /private/etc/sudoers.d/chris-cafe
+/bin/launchctl bootout system "$daemon" >/dev/null 2>&1 || true
+/bin/launchctl bootstrap system "$daemon"

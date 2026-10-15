@@ -94,6 +94,10 @@ parser.add_argument('-v', '--verbose', action='store_true',
 parser.add_argument('--vectors', action='store_true',
   help='print the sudo argument vectors and exit; make check uses this '
   'to prove the script and the sudoers file still agree')
+parser.add_argument('--events-json', action='store_true',
+  help='write newline-delimited JSON events for the menu bar app')
+parser.add_argument('--parent-pid', type=int,
+  help='stop if the supervising menu bar app exits')
 parser.add_argument('arg', nargs='*', help='command to run; with no '
   'command, run until interrupted. Put -- first when the command takes '
   'options of its own')
@@ -108,7 +112,14 @@ if args.vectors:
   sys.exit(0)
 
 def say(message, mark=CUP):
-  print(f'{mark} {parser.prog}: {message}', file=sys.stderr)
+  if args.events_json:
+    print(json.dumps({'kind': mark, 'message': message}),
+      file=sys.stderr, flush=True)
+  else:
+    print(f'{mark} {parser.prog}: {message}', file=sys.stderr, flush=True)
+
+def parent_gone():
+  return args.parent_pid is not None and os.getppid() != args.parent_pid
 
 # A probe that times out or cannot start must look like a probe that
 # failed, so that every caller takes its own failure path.
@@ -324,6 +335,8 @@ def try_lock():
   held.flush()
   return held
 
+if parent_gone():
+  sys.exit(0)
 lock = take_lock()
 
 # Python runs no finally block on a default SIGTERM or SIGHUP, and the
@@ -350,6 +363,8 @@ try:
   # start of its run, so a signal delivered during it can leave the
   # override on. Releasing one that was never taken costs one sudo call.
   held = True
+  if args.events_json:
+    say('taking the sleep override', 'starting')
   if sudo(HOLD).returncode != 0:
     say('cannot disable lid-close sleep', NOGO)
     denied()
@@ -377,6 +392,8 @@ try:
   deadline = mono
   blank_at = mono
   while True:
+    if parent_gone():
+      break
     if child is not None and child.poll() is not None:
       status = child.returncode
       status = 128 - status if status < 0 else status
