@@ -15,10 +15,19 @@ The original command-line utility remains available below.
 - No Dock icon, Electron, web server, network requests, or telemetry.
 - Uses the original thermal protection and display policy described below.
 
+Full Sail exists to keep your computer running so agents can keep operating
+in the background while the screen is locked. Use Lock Screen when stepping
+away; Full Sail preserves your Mac's lock settings. Automatic screen locking
+still follows those settings.
+
 The color icons reinterpret Wholesail's three-triangle sailboat: full sails
 for on, a bare mast and furled sails for off. The menu bar uses monochrome
 template icons that follow the Mac's light or dark appearance. Status is
-also available in the menu and accessibility label.
+also available in the menu and accessibility label. Chris's original ☕ and
+🛌 emojis appear beside the sail in the menu bar; guard and stop messages
+keep their original emojis, such as 🦺, 💻, 🔌, 🔥, and 🌙. Sailing actions have
+plain-language explanations: **Raise Sails (turn on)** and
+**Lower Sails (turn off)**.
 
 ### Build and open
 
@@ -34,14 +43,24 @@ The engine runs as your user; the app does not run as root.
 open 'macos/dist/Full Sail.app'
 ```
 
+If a session is running from the build folder, preserve it by building to
+a separate folder, for example
+`FULL_SAIL_OUTPUT_DIR="$PWD/macos/dist/v0.1.1" ./macos/build.sh --universal`.
+Quit the old app before opening the new copy. The build refuses to overwrite
+a running app in its output folder.
+
 Copy `Full Sail.app` to Applications for everyday use and launch at login.
 The build is ad-hoc signed for local use, not Developer ID signed or
 notarized. The ZIP contains the app and its support installer; it is a
 development build, not a public release.
 
-On first use, choose **Set Up Closed-Lid Support…**. Review the explanation,
-then open the bundled installer and approve its administrator prompt. After
-installation, choose **Recheck Setup**. Existing `sudo make install` users
+On first use, choose **Set Up Full Sail (allow closed-lid use)…**. Open the
+bundled installer and follow its administrator prompt. Full Sail checks
+automatically every five seconds until setup is ready, including while its
+menu is open. Then **Raise Sails (turn on)** becomes available. There is no
+manual recheck step. It continues checking every 30 seconds when ready and
+idle; checks pause during keep-awake sessions and never overlap.
+Existing `sudo make install` users
 can use the app without reinstalling if all four grants and the reset
 daemon are already present. Build and tests do not install support or
 change your Mac's sleep settings.
@@ -83,7 +102,8 @@ python3 -m unittest discover -s tests -v
 ```
 
 Swift tests cover confirmed state changes, startup cancellation, failed
-cleanup, crashes, thermal-stop messaging, and fragmented event streams.
+cleanup, crashes, thermal-stop messaging, original status emojis, fragmented
+event streams, and automatic setup detection after installation or removal.
 Python tests run the actual engine loop with mocked OS probes, including
 critical heat, repeated serious heat, cooling, and unreadable temperatures.
 They never invoke privileged power commands. The original `make check`

@@ -8,7 +8,12 @@ else
     swift build -c release
     binary="$(swift build -c release --show-bin-path)/FullSail"
 fi
-app="$PWD/dist/Full Sail.app"
+output="${FULL_SAIL_OUTPUT_DIR:-$PWD/dist}"
+app="$output/Full Sail.app"
+if /usr/bin/pgrep -f "^$app/Contents/MacOS/FullSail$" >/dev/null; then
+    echo 'Full Sail is running from this build folder. Quit it, or choose another FULL_SAIL_OUTPUT_DIR.' >&2
+    exit 1
+fi
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" assets
 cp "$binary" "$app/Contents/MacOS/FullSail"
 cp Info.plist "$app/Contents/Info.plist"
@@ -33,5 +38,5 @@ pkgbuild --root "$stage/root" --scripts "$stage/scripts" --ownership recommended
     "$app/Contents/Resources/FullSailSupport.pkg"
 codesign --force --sign - "$app"
 codesign --verify --deep --strict "$app"
-ditto -c -k --sequesterRsrc --keepParent "$app" dist/Full-Sail.zip
+ditto -c -k --sequesterRsrc --keepParent "$app" "$output/Full-Sail.zip"
 echo "Built: $app"

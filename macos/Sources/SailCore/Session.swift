@@ -15,35 +15,49 @@ public struct Session {
     public private(set) var state: SailState = .off
     public private(set) var detail = "Your Mac follows its usual sleep settings."
     public private(set) var guardDetail = "Temperature protection is automatic."
+    public private(set) var guardEmoji = "🦺"
+    public private(set) var lastProblemEmoji: String?
     public private(set) var mayHoldOverride = false
     public private(set) var releaseFailed = false
     public private(set) var lastProblem: String?
     public init() {}
 
+    public var statusEmoji: String {
+        switch state {
+        case .on, .starting, .stopping: return "☕"
+        case .uncertain: return "❗"
+        case .off: return lastProblemEmoji ?? "🛌"
+        }
+    }
+
     public mutating func begin() {
         state = .starting
-        detail = "Raising sails…"
+        detail = "Raising sails (turning on)…"
         releaseFailed = false
         lastProblem = nil
+        lastProblemEmoji = nil
     }
-    public mutating func stopping() { state = .stopping; detail = "Lowering sails…" }
+    public mutating func stopping() { state = .stopping; detail = "Lowering sails (turning off)…" }
     public mutating func receive(_ event: EngineEvent) {
         switch event.kind {
         case "starting": mayHoldOverride = true
         case "☕":
             mayHoldOverride = true
+            if event.message == "sleep disabled again" { lastProblem = nil; lastProblemEmoji = nil }
             if state != .stopping { state = .on; detail = "Your Mac stays awake, even with the lid closed." }
         case "🛌":
             mayHoldOverride = false
             releaseFailed = false
             state = .off
             detail = "Your Mac follows its usual sleep settings."
-        case "🦺", "💻", "🔌", "📺", "🤷": guardDetail = event.message
+        case "🦺", "💻", "🔌", "📺", "🤷":
+            guardDetail = event.message
+            guardEmoji = event.kind
         case "❗":
             lastProblem = event.message
             if event.message == "could not set the override again" {
                 state = .uncertain
-                detail = "Keep-awake could not be restored. Lower the sails or wait for a retry."
+                detail = "Keep-awake could not be restored. Lower Sails (turn off) or wait for a retry."
             }
             if event.message == "sleep is still disabled" {
                 releaseFailed = true
@@ -53,6 +67,7 @@ public struct Session {
             }
         case "⛔", "🙈", "🔥", "🌙", "❌":
             lastProblem = event.message
+            lastProblemEmoji = event.kind
         default: break
         }
     }
@@ -69,6 +84,8 @@ public struct Session {
     public mutating func restored() {
         mayHoldOverride = false
         releaseFailed = false
+        lastProblem = nil
+        lastProblemEmoji = nil
         state = .off
         detail = "Normal sleep restored."
     }

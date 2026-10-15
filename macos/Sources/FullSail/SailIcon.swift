@@ -94,8 +94,10 @@ enum SailIcon {
                     let bar = NSRect(x: x + 155 + CGFloat(offset) * 145, y: 165, width: 120, height: 40)
                     (dark ? NSColor(white: 0.15, alpha: 1) : NSColor(white: 0.92, alpha: 1)).setFill()
                     NSBezierPath(roundedRect: bar, xRadius: 8, yRadius: 8).fill()
-                    let drawing = NSRect(x: bar.midX - 11, y: bar.midY - 11, width: 22, height: 22)
+                    let drawing = NSRect(x: bar.midX - 25, y: bar.midY - 11, width: 22, height: 22)
                     draw(in: drawing, raised: raised, template: true, ink: dark ? .white : .black)
+                    (raised ? "☕" : "🛌").draw(at: .init(x: bar.midX + 1, y: bar.midY - 11),
+                                              withAttributes: [.font: NSFont.systemFont(ofSize: 18)])
                 }
             }
             text("Native menu bar app  ·  No Dock icon  ·  Timed sessions  ·  Thermal protection", 70, 65, 19)

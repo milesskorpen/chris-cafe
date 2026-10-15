@@ -2,6 +2,21 @@ import XCTest
 @testable import SailCore
 
 final class SessionTests: XCTestCase {
+    func testOriginalEmojisDescribeActiveGuardAndThermalStop() {
+        var session = Session()
+        XCTAssertEqual(session.statusEmoji, "🛌")
+        session.begin()
+        session.receive(.init(kind: "☕", message: "sleep disabled"))
+        XCTAssertEqual(session.statusEmoji, "☕")
+        session.receive(.init(kind: "🔌", message: "thermal safeguard off, because the machine is on AC power"))
+        XCTAssertEqual(session.guardEmoji, "🔌")
+        session.receive(.init(kind: "🔥", message: "thermal pressure Critical; going to sleep"))
+        session.receive(.init(kind: "🛌", message: "sleep enabled"))
+        session.ended(status: 125, requested: false)
+        XCTAssertEqual(session.statusEmoji, "🔥")
+        session.begin()
+        XCTAssertEqual(session.statusEmoji, "☕")
+    }
     func testOnlyConfirmedHoldRaisesSails() {
         var session = Session()
         session.begin()
